@@ -12,6 +12,7 @@ import webbrowser
 
 import uvicorn
 
+from .prompt import SKILL_NAME, install_skill
 from .server import OpenError, Presence, create_app
 
 DEFAULT_PORT = 8765
@@ -44,7 +45,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
     parser.add_argument("--author", help="name recorded on comments (default: your OS username)")
+    parser.add_argument(
+        "--install-skill",
+        action="store_true",
+        help="install the editable-html skill for Claude Code (~/.claude/skills) and exit",
+    )
     args = parser.parse_args(argv)
+
+    if args.install_skill:
+        print(f"Installed the {SKILL_NAME} skill at {install_skill()}")
+        return
 
     try:
         author = args.author or getpass.getuser()

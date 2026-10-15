@@ -864,7 +864,7 @@
     }
     const res = await api(`/api/agent-prompt?doc=${encodeURIComponent(cfg.doc)}`);
     if (res.error) { toast(res.error, "error"); return; }
-    const ta = h("textarea", { class: "prompt-text", readonly: true, rows: 16 });
+    const ta = h("textarea", { class: "prompt-text", readonly: true, rows: 10 });
     ta.value = res.prompt;
     const choice = await modal({
       title: "Agent prompt",
@@ -873,7 +873,10 @@
         `Paste this into your AI agent to have it address the ${res.open} open comment${res.open > 1 ? "s" : ""}. ` +
         "Keep this tab open: it reloads by itself when the agent saves its changes.",
         ta,
-      ],
+        res.skillInstalled ? null : h("p", { class: "hint",
+          text: "Tip: run \"uv run htmlreview --install-skill\" once so Claude Code always has the editable-html skill. " +
+                "The prompt also says where to read it, so it works without installing." }),
+      ].filter(Boolean),
       buttons: [{ label: "Close", value: null }, { label: "Copy prompt", value: "copy", kind: "primary" }],
     });
     if (choice === "copy") {

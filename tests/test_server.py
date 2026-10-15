@@ -354,15 +354,31 @@ def test_agent_prompt_needs_saved_files(client, report):
     assert res.status_code == 409
 
 
-def test_agent_prompt_names_the_files(client, report):
+def test_agent_prompt_lists_open_comments_and_points_at_skill(client, report):
     cfg, _ = load_page(client, report)
-    resolved = dict(COMMENT, id="c2", status="resolved")
-    save(client, cfg, comments=[COMMENT, resolved])
+    resolved = dict(COMMENT, id="c2", status="resolved", body="Old point.")
+    element = dict(COMMENT, id="c3", anchor={"eid": "e6"}, body="Rename this heading.",
+                   replies=[{"author": "sam", "body": "Maybe 'Overview'?"}])
+    save(client, cfg, comments=[COMMENT, resolved, element])
     res = client.post(f"/api/agent-prompt?doc={cfg['doc']}").json()
-    assert res["open"] == 1
+    assert res["open"] == 2
     prompt = res["prompt"]
-    assert "1 open review comment " in prompt
-    assert str(report.with_name("report.edit.html")) in prompt
+    assert f"In this file: {report.with_name('report.edit.html')}" in prompt
     assert str(report.with_name("report.comments.json")) in prompt
-    assert f"Do not modify the original: {report}" in prompt
-    assert "data-eid" in prompt and '"resolved"' in prompt
+    assert "editable-html skill" in prompt
+    from htmlreview.prompt import SKILL_FILE
+
+    assert str(SKILL_FILE) in prompt and SKILL_FILE.is_file()
+    assert '- c1, on "Revenue grew" (element e7): Source?' in prompt
+    assert '- c3, on element e6 ("Summary"): Rename this heading.' in prompt
+    assert "  Reply from sam: Maybe 'Overview'?" in prompt
+    assert "Old point." not in prompt
+
+
+def test_install_skill(tmp_path, monkeypatch):
+    from htmlreview import prompt
+
+    monkeypatch.setattr(prompt.Path, "home", lambda: tmp_path)
+    target = prompt.install_skill()
+    assert target == tmp_path / ".claude" / "skills" / "editable-html" / "SKILL.md"
+    assert target.read_text(encoding="utf-8").startswith("---\nname: editable-html\n")

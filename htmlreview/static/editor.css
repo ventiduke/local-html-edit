@@ -147,7 +147,8 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   border-radius: 12px; padding: 20px 22px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
 }
 .modal.wide { max-width: 720px; }
-.modal textarea.prompt-text { min-height: 280px; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+.modal .hint { margin-top: 10px; }
+.modal textarea.prompt-text { min-height: 180px; font: 12px/1.5 ui-monospace, Consolas, monospace; }
 .modal h2 { font-size: 17px; margin: 0 0 10px; }
 .modal p { margin: 0 0 10px; }
 .modal p.warn { background: var(--warn-bg); color: var(--warn); padding: 8px 10px; border-radius: 7px; }

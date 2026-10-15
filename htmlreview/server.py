@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from . import comments, picker, transform
-from .prompt import agent_prompt
+from .prompt import agent_prompt, installed_skill_path
 
 STATIC_DIR = Path(__file__).parent / "static"
 HTML_SUFFIXES = (".html", ".htm")
@@ -390,10 +390,13 @@ def create_app(
                 return JSONResponse(
                     {"error": "Save first: the agent works from the saved files."}, status_code=409
                 )
-        open_count = sum(1 for c in sidecar["comments"] if c["status"] == "open")
+            text, _ = transform.decode(d.working_copy.read_bytes())
+        open_comments = [c for c in sidecar["comments"] if c["status"] == "open"]
+        element_text = transform.tag(text).editable
         return {
-            "open": open_count,
-            "prompt": agent_prompt(d.path, d.working_copy, d.sidecar, open_count),
+            "open": len(open_comments),
+            "prompt": agent_prompt(d.working_copy, d.sidecar, open_comments, element_text),
+            "skillInstalled": installed_skill_path().is_file(),
         }
 
     @app.post("/api/publish")
