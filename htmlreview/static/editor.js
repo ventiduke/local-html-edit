@@ -27,6 +27,8 @@
     showResolved: false,
     leaving: false,
     canSave: !cfg.commentsError,
+    busy: false, // a save or publish is in flight
+    saveSeq: 0, // bumps on every save, so a stale change-check result is ignored
   };
   const hr = (window.__hr = { cfg, state, editable: new Set(), locked: new Set() });
 
@@ -114,6 +116,7 @@
       <div class="file"><span class="name"></span><span class="status"></span></div>
       <div class="actions">
         <button class="open" title="Open another HTML file">Open…</button>
+        <button class="prompt-btn" title="Get a prompt that asks an AI agent to address the open comments">Agent prompt</button>
         <button class="comments-btn" title="Show comments (Ctrl+Alt+M adds one)">Comments <span class="count"></span></button>
         <button class="save primary" title="Save (Ctrl+S)">Save</button>
         <button class="publish" title="Write a clean copy and finish this review">Publish</button>
@@ -144,20 +147,22 @@
 
   $(".collapse").addEventListener("click", () => bar.classList.toggle("collapsed"));
 
-  function toast(text, kind = "info", ms) {
+  function toast(text, kind = "info", ms, action) {
     const el = h("div", { class: `toast ${kind}`, role: "status" },
       h("span", { text }),
+      action ? h("button", { class: "primary", text: action.label, onclick: action.onclick }) : null,
       h("button", { class: "icon", "aria-label": "Dismiss", text: "✕", onclick: () => el.remove() }));
     $(".toasts").append(el);
     if (ms !== 0) setTimeout(() => el.remove(), ms || (kind === "error" ? 9000 : 3000));
+    return el;
   }
   hr.toast = toast;
 
-  function modal({ title, body, buttons }) {
+  function modal({ title, body, buttons, wide }) {
     return new Promise((resolve) => {
       const wrap = $(".modal-wrap");
       const close = (value) => { wrap.hidden = true; wrap.replaceChildren(); resolve(value); };
-      const box = h("div", { class: "modal", role: "dialog", "aria-modal": "true" },
+      const box = h("div", { class: `modal${wide ? " wide" : ""}`, role: "dialog", "aria-modal": "true" },
         h("h2", { text: title }),
         ...(Array.isArray(body) ? body : [body]).map((b) => (typeof b === "string" ? h("p", { text: b }) : b)),
         h("div", { class: "modal-actions" },
@@ -418,8 +423,11 @@
     const edits = collectEdits();
     if (!unsaved()) return true;
     $(".save").disabled = true;
+    state.busy = true;
+    state.saveSeq++;
     const res = await api(`/api/save?doc=${encodeURIComponent(cfg.doc)}`,
-      { version: state.version, edits, comments: state.comments });
+      { version: state.version, edits, comments: state.comments })
+      .finally(() => { state.busy = false; });
     if (res.conflict) { refreshStatus(); handleConflict(); return false; }
     if (res.error) { refreshStatus(); toast(`Save failed: ${res.error}`, "error"); return false; }
     state.version = res.version;
@@ -498,8 +506,11 @@
       buttons: [{ label: "Cancel", value: false }, { label: "Publish", value: true, kind: "primary" }],
     });
     if (!ok) return;
+    state.busy = true;
+    state.saveSeq++;
     const res = await api(`/api/publish?doc=${encodeURIComponent(cfg.doc)}`,
-      { version: state.version, edits, comments: [] });
+      { version: state.version, edits, comments: [] })
+      .finally(() => { state.busy = false; });
     if (res.conflict) { handleConflict(); return; }
     if (res.error) { toast(`Publish failed: ${res.error}`, "error"); return; }
     state.leaving = true;
@@ -821,6 +832,138 @@
   bubble.addEventListener("mousedown", (e) => e.preventDefault());
   bubble.addEventListener("click", () => startComment());
 
+  // ------------------------------------------------------- agent prompt
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = h("textarea", { style: "position:fixed;opacity:0" });
+      ta.value = text;
+      root.append(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    }
+  }
+
+  async function showAgentPrompt() {
+    if (!state.comments.some((c) => c.status === "open")) {
+      toast("There are no open comments for an agent to address.");
+      return;
+    }
+    if (unsaved()) {
+      const ok = await modal({
+        title: "Save first?",
+        body: "The agent works from the saved files, so your changes need to be saved first.",
+        buttons: [{ label: "Cancel", value: false }, { label: "Save and continue", value: true, kind: "primary" }],
+      });
+      if (!ok || !(await save())) return;
+    }
+    const res = await api(`/api/agent-prompt?doc=${encodeURIComponent(cfg.doc)}`);
+    if (res.error) { toast(res.error, "error"); return; }
+    const ta = h("textarea", { class: "prompt-text", readonly: true, rows: 16 });
+    ta.value = res.prompt;
+    const choice = await modal({
+      title: "Agent prompt",
+      wide: true,
+      body: [
+        `Paste this into your AI agent to have it address the ${res.open} open comment${res.open > 1 ? "s" : ""}. ` +
+        "Keep this tab open: it reloads by itself when the agent saves its changes.",
+        ta,
+      ],
+      buttons: [{ label: "Close", value: null }, { label: "Copy prompt", value: "copy", kind: "primary" }],
+    });
+    if (choice === "copy") {
+      if (await copyText(res.prompt)) toast("Prompt copied. Paste it into your agent.");
+      else toast("Couldn't copy automatically. Open Agent prompt again and copy the text by hand.", "error");
+    }
+  }
+  $(".prompt-btn").addEventListener("click", showAgentPrompt);
+
+  // ------------------------------------------- reload when files change
+
+  // An agent (or anything else) may edit the working copy and comments file
+  // while this tab is open. Check every couple of seconds; once the change
+  // has settled, reload so it shows up. If reloading would lose something
+  // the reviewer is doing here, ask instead.
+  const VIEW_KEY = `__hr-view:${cfg.doc}`;
+  let pendingVersion = null;
+  let changeToast = null;
+
+  const busyHere = () => unsaved() || state.editing || draft || replying || !$(".modal-wrap").hidden;
+
+  function reloadFromDisk() {
+    try {
+      sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+        scroll: window.scrollY,
+        sidebar: !sidebar.hidden,
+        active: state.active,
+        showResolved: state.showResolved,
+        before: state.comments.map((c) => [c.id, c.status, (c.replies || []).length]),
+      }));
+    } catch { /* storage unavailable: just reload */ }
+    state.leaving = true;
+    location.reload();
+  }
+
+  function onDiskChange() {
+    if (!busyHere()) { reloadFromDisk(); return; }
+    if (changeToast && changeToast.isConnected) return;
+    changeToast = toast(
+      unsaved()
+        ? "This file or its comments changed on disk (an agent?). Reload to see the changes; your unsaved changes here will be lost."
+        : "This file or its comments changed on disk. Reload to see the changes.",
+      "warn", 0, { label: "Reload", onclick: reloadFromDisk });
+  }
+
+  async function checkDisk() {
+    if (state.leaving || state.busy || document.hidden) return;
+    const seq = state.saveSeq;
+    const res = await api(`/api/status?doc=${encodeURIComponent(cfg.doc)}`);
+    if (!res.version || state.leaving || state.busy || seq !== state.saveSeq) return;
+    if (res.version === state.version) { pendingVersion = null; return; }
+    // Wait for two identical readings in a row: the agent may still be
+    // writing the second file.
+    if (res.version !== pendingVersion) { pendingVersion = res.version; return; }
+    onDiskChange();
+  }
+
+  function restoreView() {
+    let view = null;
+    try {
+      view = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null");
+      sessionStorage.removeItem(VIEW_KEY);
+    } catch { /* ignore */ }
+    if (!view) return;
+    state.showResolved = view.showResolved;
+    $(".show-resolved").checked = view.showResolved;
+    if (view.active && state.comments.some((c) => c.id === view.active)) state.active = view.active;
+    openSidebar(view.sidebar);
+    renderComments();
+    window.scrollTo(0, view.scroll);
+    const before = new Map(view.before.map(([id, status, replies]) => [id, { status, replies }]));
+    let resolved = 0, replies = 0;
+    for (const c of state.comments) {
+      const b = before.get(c.id);
+      if (!b) continue;
+      if (b.status === "open" && c.status === "resolved") resolved++;
+      replies += Math.max(0, (c.replies || []).length - b.replies);
+    }
+    if (resolved && !state.showResolved) {
+      // Show what the agent resolved, with its resolution notes.
+      state.showResolved = true;
+      $(".show-resolved").checked = true;
+      renderComments();
+    }
+    const parts = [];
+    if (resolved) parts.push(`${resolved} comment${resolved > 1 ? "s" : ""} resolved`);
+    if (replies) parts.push(`${replies} new repl${replies > 1 ? "ies" : "y"}`);
+    toast(`Reloaded with changes from disk${parts.length ? `: ${parts.join(", ")}` : ""}.`, "info", 6000);
+  }
+
   // ------------------------------------------------------------- start
 
   if (cfg.commentsError) {
@@ -833,7 +976,11 @@
 
   function afterPageScripts() {
     // Give chart libraries and page scripts a moment after "load".
-    setTimeout(classify, 400);
+    setTimeout(() => {
+      classify();
+      restoreView();
+      setInterval(checkDisk, 2000);
+    }, 400);
   }
   if (document.readyState === "complete") afterPageScripts();
   else window.addEventListener("load", afterPageScripts, { once: true });
