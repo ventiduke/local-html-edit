@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HTML Review</title>
+{{KEEPALIVE}}
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6576;
@@ -44,6 +45,9 @@
     background: transparent; color: var(--text); cursor: pointer;
   }
   #msg { min-height: 1.5em; margin: 16px 0 0; color: var(--error); font-size: 14px; }
+  footer { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .link { background: none; border: 0; padding: 4px 0; color: var(--muted); cursor: pointer; text-decoration: underline; }
+  .link:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -57,6 +61,7 @@
     <button class="secondary" type="submit">Open</button>
   </form>
   <div id="msg" role="status"></div>
+  <footer><button class="link" id="exit" title="Stop the tool. It also stops by itself shortly after you close every tab.">Exit HTML Review</button></footer>
 </main>
 <script>
   const TOKEN = "{{API_TOKEN}}";
@@ -85,6 +90,13 @@
     try { handle(await call("/api/pick")); }
     catch (e) { msg.textContent = "Can't reach the tool. Is it still running?"; }
     finally { pickBtn.disabled = false; }
+  });
+
+  document.getElementById("exit").addEventListener("click", async () => {
+    try { await call("/api/shutdown"); } catch (e) {}
+    if (window.__hrKeepalive) window.__hrKeepalive.stop();
+    document.querySelector("main").innerHTML =
+      "<h1>HTML Review has stopped</h1><p>You can close this tab. Run <code>uv run htmlreview</code> to start it again.</p>";
   });
 
   document.getElementById("open-form").addEventListener("submit", async (e) => {

@@ -12,7 +12,7 @@ import webbrowser
 
 import uvicorn
 
-from .server import OpenError, create_app
+from .server import OpenError, Presence, create_app
 
 DEFAULT_PORT = 8765
 
@@ -53,9 +53,19 @@ def main(argv: list[str] | None = None) -> None:
 
     sock = _bind(args.port)
     port = sock.getsockname()[1]
+    presence = Presence()
+    stop_reason: list[str] = []
+
+    def request_exit(reason: str) -> None:
+        if not stop_reason:
+            stop_reason.append(reason)
+        server.should_exit = True
+
     app = create_app(
         allowed_hosts={f"127.0.0.1:{port}", f"localhost:{port}"},
         author=author,
+        on_exit=lambda: request_exit("Stopped from the browser."),
+        presence=presence,
     )
 
     start_url = f"http://127.0.0.1:{port}/"
@@ -66,7 +76,9 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(str(exc))
         start_url = f"http://127.0.0.1:{port}{doc.url}"
 
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, log_level="warning", timeout_graceful_shutdown=3)
+    )
 
     def announce():
         while not server.started:
@@ -74,12 +86,27 @@ def main(argv: list[str] | None = None) -> None:
                 return
             time.sleep(0.05)
         print(f"HTML Review is running at {start_url}")
-        print("Keep this window open while you work. Press Ctrl+C to quit.")
+        print("It stops by itself shortly after you close its browser tabs,")
+        print("or use the Exit button, or press Ctrl+C here.")
         if not args.no_browser:
             webbrowser.open(start_url)
 
+    def watchdog():
+        last_tick = time.monotonic()
+        while not server.should_exit:
+            time.sleep(2)
+            now = time.monotonic()
+            if now - last_tick > 30:
+                # The computer was asleep; tabs haven't had a chance to check in.
+                presence.resume()
+            last_tick = now
+            if presence.idle():
+                request_exit("All HTML Review tabs were closed, so it stopped.")
+
     threading.Thread(target=announce, daemon=True).start()
+    threading.Thread(target=watchdog, daemon=True).start()
     server.run(sockets=[sock])
+    print(stop_reason[0] if stop_reason else "HTML Review stopped.")
 
 
 if __name__ == "__main__":
