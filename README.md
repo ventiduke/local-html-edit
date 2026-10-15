@@ -50,7 +50,13 @@ uv run htmlreview --author "Alex"       # name recorded on comments (default: yo
 
 **Save.** Click **Save** or press Ctrl+S (Cmd+S). Edits go to `report.edit.html` and comments to `report.comments.json`; the original is never written to. Reopening the file later resumes from them. If either file was changed by something else since the page was loaded (an agent, another tab), the save is refused and you're offered a reload instead of overwriting.
 
-**Hand comments to an AI agent.** Click **Agent prompt**. It saves first if needed, then shows a prompt that names the working copy and comments file and tells the agent how to address each open comment and mark it resolved. Copy it into your agent (Claude Code, for example) and leave the review tab open.
+**Hand comments to an AI agent.** Click **Agent prompt**. It saves first if needed, then shows a short prompt to paste into your agent: the working copy's path, the open comments (with the text each is on and any replies), and an instruction to use the `editable-html` skill. The skill (in [htmlreview/skills/editable-html/SKILL.md](htmlreview/skills/editable-html/SKILL.md)) explains how the tool's files work, so the agent is free to make any change the comments ask for (wording, structure, styling, charts) without breaking the review. For Claude Code, install it once:
+
+```
+uv run htmlreview --install-skill
+```
+
+This copies it to `~/.claude/skills/editable-html/`. The prompt also gives the skill file's path, so agents without it installed can read it directly. Leave the review tab open while the agent works.
 
 **Seeing the agent's changes.** The tab checks every couple of seconds whether the working copy or comments file changed on disk. Once the changes settle, it reloads by itself, keeping your scroll position and the comments panel, and says what changed (for example "2 comments resolved, 1 new reply"); resolved comments are shown so you can read the agent's notes. If you have unsaved changes or are in the middle of editing or writing a comment, it doesn't reload; a notice with a **Reload** button appears instead.
 
@@ -82,43 +88,9 @@ Next to `report.html`:
 | `report.comments.json` | Comments | Written on every save, deleted on publish |
 | `report.published.html` | Clean output | Written on publish |
 
-## For agents: the comments file
+## For agents
 
-`report.comments.json` is the interface between a human reviewer and an agent that applies the feedback. An agent needs only the two files, not the tool.
-
-```json
-{
-  "version": 1,
-  "source": "report.html",
-  "source_sha256": "9f2c…",
-  "comments": [
-    {
-      "id": "c7",
-      "anchor": {
-        "eid": "e42",
-        "quote": "win rate rose 4%",
-        "prefix": "In EMEA, ",
-        "suffix": " week over week"
-      },
-      "body": "Is this significant? Add a CI.",
-      "status": "open",
-      "author": "alex",
-      "created": "2026-10-15T10:10:00-07:00",
-      "replies": [
-        { "author": "sam", "body": "Yes, p < 0.05.", "created": "2026-10-15T11:02:00-07:00" }
-      ],
-      "resolution": null
-    }
-  ]
-}
-```
-
-- `anchor.eid` matches a `data-eid="…"` attribute in `report.edit.html`. `quote` is the exact text the comment is about, with up to 32 characters of `prefix`/`suffix` around it to tell repeated phrases apart. A comment on a whole element has no `quote`, `prefix` or `suffix`.
-- To act on comments: edit `report.edit.html` (not the original), keep existing `data-eid` attributes in place, then set the comment's `status` to `"resolved"` and `resolution` to a one-line note of what changed. Leave comments you didn't act on `"open"`.
-- New elements an agent adds don't need a `data-eid`; the tool numbers them when the file is next opened.
-- Every save writes both files, so whenever `report.comments.json` exists, `report.edit.html` exists too and its `data-eid`s match the comments.
-- Keep the JSON valid and comment `id`s unique. The full JSON Schema is in [schema/comments.schema.json](schema/comments.schema.json).
-- If the tool has the file open while an agent edits it, the next save in the browser is refused with a "changed on disk" prompt, so the agent's changes aren't overwritten.
+Everything an agent needs is in the `editable-html` skill: [htmlreview/skills/editable-html/SKILL.md](htmlreview/skills/editable-html/SKILL.md). In short: edit `report.edit.html` (never the original), leave existing `data-eid` attributes in place, and record what was done in `report.comments.json` by resolving each comment with a one-line `resolution`, or replying when not acting. The comments file's JSON Schema is in [schema/comments.schema.json](schema/comments.schema.json).
 
 ## Development
 
