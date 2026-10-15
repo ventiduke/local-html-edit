@@ -21,6 +21,12 @@ def _bind(port: int) -> socket.socket:
     """Bind to 127.0.0.1:port, or any free port if that one is taken."""
     for candidate in (port, 0):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if sys.platform == "win32":
+            # Never share the port with another running server.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            # Allow an immediate restart on the same port (lingering TIME_WAIT).
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", candidate))
             return sock

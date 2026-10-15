@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ventiduke/local-html-edit/schema/comments.schema.json",
+  "title": "HTML Review comments sidecar",
+  "description": "report.comments.json, written next to report.html by the HTML Review tool. Comments point at elements in report.edit.html through their data-eid attribute.",
+  "type": "object",
+  "required": ["version", "source", "comments"],
+  "properties": {
+    "version": { "const": 1 },
+    "source": { "type": "string", "description": "File name of the original HTML, e.g. report.html" },
+    "source_sha256": { "type": "string", "description": "SHA-256 of the original file when the sidecar was last saved" },
+    "comments": { "type": "array", "items": { "$ref": "#/$defs/comment" } }
+  },
+  "$defs": {
+    "comment": {
+      "type": "object",
+      "required": ["id", "anchor", "body", "status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^c[0-9]+$" },
+        "anchor": {
+          "type": "object",
+          "required": ["eid"],
+          "properties": {
+            "eid": { "type": "string", "description": "data-eid of the element in report.edit.html" },
+            "quote": { "type": "string", "description": "Selected text. Absent for a comment on the whole element." },
+            "prefix": { "type": "string", "description": "Up to 32 characters before the quote" },
+            "suffix": { "type": "string", "description": "Up to 32 characters after the quote" }
+          }
+        },
+        "body": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["open", "resolved"] },
+        "author": { "type": "string" },
+        "created": { "type": "string", "description": "ISO 8601 timestamp with offset" },
+        "replies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["body"],
+            "properties": {
+              "author": { "type": "string" },
+              "body": { "type": "string", "minLength": 1 },
+              "created": { "type": "string" }
+            }
+          }
+        },
+        "resolution": {
+          "type": ["string", "null"],
+          "description": "One line on what was changed, filled in when an agent or person resolves the comment"
+        }
+      }
+    }
+  }
+}

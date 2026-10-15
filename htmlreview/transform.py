@@ -78,8 +78,25 @@ def decode(data: bytes) -> tuple[str, str]:
     return data.decode(enc, errors="surrogateescape"), enc
 
 
+def _encode_errors(err: UnicodeEncodeError):
+    # Bytes that couldn't be decoded go back unchanged (surrogateescape);
+    # characters the file's encoding can't hold (an emoji typed into a
+    # windows-1252 report) become numeric character references.
+    out = bytearray()
+    for ch in err.object[err.start : err.end]:
+        code = ord(ch)
+        if 0xDC80 <= code <= 0xDCFF:
+            out.append(code - 0xDC00)
+        else:
+            out += f"&#{code};".encode("ascii")
+    return bytes(out), err.end
+
+
+codecs.register_error("htmlreview", _encode_errors)
+
+
 def encode(text: str, encoding: str) -> bytes:
-    return text.encode(encoding, errors="surrogateescape")
+    return text.encode(encoding, errors="htmlreview")
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +202,9 @@ def normalize_text(s: str) -> str:
     return _WS_RE.sub(" ", s.replace(" ", " ")).strip()
 
 
-def _is_editable(el: Element, elements: list[Element], text: str) -> bool:
+def _is_editable(
+    el: Element, elements: list[Element], text: str, require_text: bool = True
+) -> bool:
     if el.tag not in CANDIDATE_TAGS or el.excluded or el.complex or not el.closed:
         return False
     # Every descendant must also have been closed explicitly, otherwise the
@@ -196,7 +215,9 @@ def _is_editable(el: Element, elements: list[Element], text: str) -> bool:
         if child.tag not in VOID_TAGS and not child.closed:
             return False
         todo.extend(child.children)
-    return bool(source_text(text[el.start_end : el.end_start]))
+    # Empty elements are usually filled in by scripts, so they aren't tagged.
+    # One that already has an eid was emptied by an edit and stays editable.
+    return not require_text or bool(source_text(text[el.start_end : el.end_start]))
 
 
 @dataclass
@@ -219,7 +240,7 @@ def tag(text: str) -> Tagged:
         if el.parent is not None and (el.parent in taken):
             taken.add(i)
             continue
-        if _is_editable(el, elements, text):
+        if _is_editable(el, elements, text, require_text=EID_ATTR not in el.attrs):
             units.append(i)
             taken.add(i)
 
@@ -278,6 +299,95 @@ def _apply(text: str, splices: list[tuple[int, int, str]]) -> str:
         pos = end
     out.append(text[pos:])
     return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Applying edits
+
+
+class EditError(ValueError):
+    pass
+
+
+def apply_edits(text: str, edits: dict[str, str]) -> str:
+    """Replace the inner HTML of tagged elements, by eid, in tagged source.
+
+    Only editable units can be replaced; anything else in the document is
+    left byte-identical.
+    """
+    if not edits:
+        return text
+    elements = scan(text)
+    by_eid: dict[str, Element] = {}
+    for el in elements:
+        eid = el.attrs.get(EID_ATTR)
+        if eid and eid not in by_eid:
+            by_eid[eid] = el
+    splices = []
+    for eid, inner in edits.items():
+        el = by_eid.get(eid)
+        if el is None or not _is_editable(el, elements, text, require_text=False):
+            raise EditError(f"Element {eid} can't be edited (it may have changed on disk).")
+        splices.append((el.start_end, el.end_start, sanitize_fragment(inner)))
+    return _apply(text, splices)
+
+
+_DROP_WITH_CONTENT = frozenset("script style template iframe object noscript textarea".split())
+_DROP_ATTR_RE = re.compile(r"^(on|data-hr|data-eid$|contenteditable$|spellcheck$)", re.I)
+
+
+class _Sanitizer(HTMLParser):
+    """Rebuild an edited fragment keeping only inline text markup."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out: list[str] = []
+        self.dropping = 0
+
+    def _start(self, tag, attrs, closed):
+        if tag in _DROP_WITH_CONTENT:
+            if not closed:
+                self.dropping += 1
+            return
+        if self.dropping or tag not in INLINE_TAGS:
+            return
+        parts = [tag]
+        for name, value in attrs:
+            if _DROP_ATTR_RE.match(name):
+                continue
+            parts.append(name if value is None else f'{name}="{html.escape(value, quote=True)}"')
+        self.out.append("<" + " ".join(parts) + ">")
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, tag in VOID_TAGS)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, True)
+
+    def handle_endtag(self, tag):
+        if tag in _DROP_WITH_CONTENT:
+            self.dropping = max(0, self.dropping - 1)
+        elif not self.dropping and tag in INLINE_TAGS and tag not in VOID_TAGS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self.dropping:
+            self.out.append(data.replace("<", "&lt;").replace(">", "&gt;"))
+
+    def handle_entityref(self, name):
+        if not self.dropping:
+            self.out.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if not self.dropping:
+            self.out.append(f"&#{name};")
+
+
+def sanitize_fragment(fragment: str) -> str:
+    s = _Sanitizer()
+    s.feed(fragment)
+    s.close()
+    return "".join(s.out)
 
 
 # ---------------------------------------------------------------------------

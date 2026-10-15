@@ -160,3 +160,49 @@ def test_inject_without_head(src, before):
     out = inject(src, {}, "/e.js")
     assert out.index("/e.js") < out.index(before)
     assert out.index("/e.js") > (out.lower().find("<!doctype") if "<!" in src else -1)
+
+
+# -- applying edits -----------------------------------------------------------
+
+from htmlreview.transform import EditError, apply_edits, sanitize_fragment  # noqa: E402
+
+
+def test_apply_edits_touches_only_targeted_elements():
+    src = '<p data-eid="e1">one</p>\n<script>var x="<p>";</script>\n<p data-eid="e2">two</p>'
+    out = apply_edits(src, {"e2": "TWO <b>bold</b>"})
+    assert out == src.replace(">two<", ">TWO <b>bold</b><")
+
+
+def test_apply_edits_rejects_unknown_or_non_editable():
+    src = '<p data-eid="e1">a</p><div data-eid="e2"><p>x</p></div>'
+    with pytest.raises(EditError):
+        apply_edits(src, {"e9": "x"})
+    with pytest.raises(EditError):
+        apply_edits(src, {"e2": "x"})
+
+
+def test_emptied_element_stays_editable():
+    src = tag("<p>text</p>").html
+    emptied = apply_edits(src, {"e1": ""})
+    assert tag(emptied).editable == {"e1": ""}
+    assert apply_edits(emptied, {"e1": "back"}) == '<p data-eid="e1">back</p>'
+
+
+@pytest.mark.parametrize(
+    "dirty, clean",
+    [
+        ("plain &amp; simple", "plain &amp; simple"),
+        ('<b>bold</b> <a href="x.html" onclick="evil()">link</a>', '<b>bold</b> <a href="x.html">link</a>'),
+        ("<div>block</div><p>para</p>", "blockpara"),
+        ("a<script>alert(1)</script>b<style>p{}</style>c", "abc"),
+        ('<span data-hr-editable contenteditable="true" class="k">x</span>', '<span class="k">x</span>'),
+        ("x<br>y<img src=a.png>", "x<br>y"),
+    ],
+)
+def test_sanitize_fragment(dirty, clean):
+    assert sanitize_fragment(dirty) == clean
+
+
+def test_encode_escapes_characters_the_encoding_cannot_hold():
+    text, enc = decode('<meta charset="windows-1252"><p>café</p>'.encode("cp1252"))
+    assert encode(text.replace("café", "café 🎉"), enc).endswith("café &#127881;</p>".encode("cp1252"))
