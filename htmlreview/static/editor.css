@@ -148,6 +148,17 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 }
 .modal.wide { max-width: 720px; }
 .modal .hint { margin-top: 10px; }
+.modal .hint:empty { display: none; }
+.modal .hint + .path-row { margin-top: 12px; }
+.modal .hint.error { color: var(--error); }
+.browse-row { margin-bottom: 12px; }
+.browse-row + .hint { margin: 0 0 12px; }
+.path-row { display: flex; gap: 8px; }
+.path-row input {
+  flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
+}
+.path-row input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .modal textarea.prompt-text { min-height: 180px; font: 12px/1.5 ui-monospace, Consolas, monospace; }
 .modal h2 { font-size: 17px; margin: 0 0 10px; }
 .modal p { margin: 0 0 10px; }

@@ -40,6 +40,8 @@ uv run htmlreview --no-browser          # don't open a browser tab
 uv run htmlreview --author "Alex"       # name recorded on comments (default: your OS username)
 ```
 
+**If the file dialog doesn't appear.** The dialog is a separate window opened by the tool, not by the browser, so when the tool was started in the background (for example by an AI agent, or from an editor's built-in browser) it can open behind other windows. Check the taskbar, or close it with the button the page shows and paste the file's path instead. When an agent starts the tool for you, ask it to pass the report's path (`uv run htmlreview path\to\report.html`) so the report opens directly.
+
 ## Using it
 
 **Edit text.** Hover to see what's editable (blue dashed outline), then click and type. Press Enter or Esc, or click elsewhere, to finish. Edited elements get a blue bar on the left until saved. Pasting always pastes plain text. Inside editable text, a plain click edits; Ctrl+click (Cmd+click on a Mac) follows a link.
