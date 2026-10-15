@@ -45,6 +45,9 @@
     background: transparent; color: var(--text); cursor: pointer;
   }
   #msg { min-height: 1.5em; margin: 16px 0 0; color: var(--error); font-size: 14px; }
+  #waiting { margin: 16px 0 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; color: var(--muted); }
+  #waiting[hidden] { display: none; }
+  #waiting button { margin-top: 8px; }
   footer { display: flex; justify-content: flex-end; margin-top: 8px; }
   .link { background: none; border: 0; padding: 4px 0; color: var(--muted); cursor: pointer; text-decoration: underline; }
   .link:hover { color: var(--text); }
@@ -60,6 +63,11 @@
     <input id="path" placeholder="C:\Reports\report.html" autocomplete="off" spellcheck="false" aria-label="File path">
     <button class="secondary" type="submit">Open</button>
   </form>
+  <div id="waiting" hidden role="status">
+    A file dialog has opened. Can't see it? It may be behind other windows (check the taskbar),
+    or close it and paste the file's path above instead.
+    <div><button class="secondary" id="cancel-pick">Close the dialog</button></div>
+  </div>
   <div id="msg" role="status"></div>
   <footer><button class="link" id="exit" title="Stop the tool. It also stops by itself shortly after you close every tab.">Exit HTML Review</button></footer>
 </main>
@@ -84,12 +92,18 @@
     if (result.noDialog) document.getElementById("path").focus();
   }
 
+  const waiting = document.getElementById("waiting");
   pickBtn.addEventListener("click", async () => {
     pickBtn.disabled = true;
     msg.textContent = "";
+    // The dialog is a separate window that may open behind the browser.
+    const shown = setTimeout(() => { waiting.hidden = false; }, 700);
     try { handle(await call("/api/pick")); }
     catch (e) { msg.textContent = "Can't reach the tool. Is it still running?"; }
-    finally { pickBtn.disabled = false; }
+    finally { clearTimeout(shown); waiting.hidden = true; pickBtn.disabled = false; }
+  });
+  document.getElementById("cancel-pick").addEventListener("click", () => {
+    call("/api/pick-cancel").catch(() => {});
   });
 
   document.getElementById("exit").addEventListener("click", async () => {

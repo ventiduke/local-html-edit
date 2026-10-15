@@ -382,3 +382,20 @@ def test_install_skill(tmp_path, monkeypatch):
     target = prompt.install_skill()
     assert target == tmp_path / ".claude" / "skills" / "editable-html" / "SKILL.md"
     assert target.read_text(encoding="utf-8").startswith("---\nname: editable-html\n")
+
+
+def test_pick_cancel_endpoint_and_busy():
+    from htmlreview.picker import PickerBusy
+
+    closed = []
+
+    def busy(_):
+        raise PickerBusy("A file dialog is already open.")
+
+    app = create_app(allowed_hosts={HOST}, api_token=TOKEN, pick=busy,
+                     cancel_pick=lambda: closed.append(1) or True)
+    c = TestClient(app, headers={"X-HR-Token": TOKEN})
+    res = c.post("/api/pick")
+    assert res.status_code == 409 and res.json()["busy"] is True
+    assert c.post("/api/pick-cancel").json() == {"closed": True}
+    assert closed == [1]

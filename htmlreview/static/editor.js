@@ -448,20 +448,43 @@
 
   async function openAnother() {
     if (!(await confirmDiscard("open another file"))) return;
-    const btn = $(".open");
-    btn.disabled = true;
-    try {
-      let result = await api("/api/pick");
-      if (result.noDialog) {
-        const path = prompt("No file dialog is available. Paste the path of an HTML file:");
-        if (!path) return;
-        result = await api("/api/open", { path });
-      }
-      if (result.url) leaveTo(result.url);
-      else if (result.error) toast(result.error, "error");
-    } finally {
-      btn.disabled = false;
-    }
+    let picking = false;
+    const status = h("p", { class: "hint", role: "status" });
+    const setStatus = (text, kind) => { status.textContent = text; status.className = `hint ${kind || ""}`; };
+    const go = (result) => {
+      if (result.url) { leaveTo(result.url); return true; }
+      if (result.error) setStatus(result.error, "error");
+      return false;
+    };
+    const browse = h("button", { class: "primary", text: "Browse…", onclick: async () => {
+      if (picking) return;
+      picking = true;
+      browse.disabled = true;
+      // The dialog is a separate window that may open behind the browser.
+      const hint = setTimeout(() => setStatus(
+        "A file dialog has opened. Can't see it? It may be behind other windows (check the taskbar), " +
+        "or paste the path below instead. Cancel closes the dialog."), 700);
+      const result = await api("/api/pick");
+      clearTimeout(hint);
+      picking = false;
+      browse.disabled = false;
+      if (result.noDialog) { setStatus("No file dialog is available here. Paste the path below.", "error"); input.focus(); return; }
+      if (result.cancelled) { setStatus(""); return; }
+      go(result);
+    } });
+    const input = h("input", { class: "path", placeholder: "Paste a file path, e.g. C:\\Reports\\report.html",
+      spellcheck: "false", autocomplete: "off", "aria-label": "File path" });
+    const form = h("form", { class: "path-row", onsubmit: async (e) => {
+      e.preventDefault();
+      if (input.value.trim()) go(await api("/api/open", { path: input.value }));
+    } }, input, h("button", { type: "submit", text: "Open" }));
+    input.addEventListener("keydown", (e) => e.stopPropagation());
+    await modal({
+      title: "Open another file",
+      body: [h("div", { class: "browse-row" }, browse), status, form],
+      buttons: [{ label: "Cancel", value: null }],
+    });
+    if (picking) api("/api/pick-cancel");
   }
   $(".open").addEventListener("click", openAnother);
 

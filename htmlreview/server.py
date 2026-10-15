@@ -198,12 +198,17 @@ def create_app(
     allowed_hosts: set[str],
     api_token: str | None = None,
     author: str = "",
-    pick: Callable[[str | None], str | None] = picker.pick_file,
+    pick: Callable[[str | None], str | None] | None = None,
+    cancel_pick: Callable[[], bool] | None = None,
     on_exit: Callable[[], None] = lambda: None,
     presence: Presence | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     session = Session()
+    if pick is None:
+        dialog = picker.Picker()
+        pick, cancel_pick = dialog.pick, dialog.cancel
+    cancel_pick = cancel_pick or (lambda: False)
     api_token = api_token or secrets.token_urlsafe(24)
     presence = presence or Presence()
     app.state.session = session
@@ -314,11 +319,17 @@ def create_app(
         on_exit()
         return {"ok": True}
 
+    @app.post("/api/pick-cancel")
+    def api_pick_cancel():
+        return {"closed": cancel_pick()}
+
     @app.post("/api/pick")
     def api_pick():
         initial = str(session.last_folder) if session.last_folder else None
         try:
             chosen = pick(initial)
+        except picker.PickerBusy as exc:
+            return JSONResponse({"error": str(exc), "busy": True}, status_code=409)
         except picker.DialogUnavailable:
             return JSONResponse(
                 {"error": "No file dialog is available here. Paste the file's path instead.",
