@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from . import comments, picker, transform
+from .prompt import agent_prompt
 
 STATIC_DIR = Path(__file__).parent / "static"
 HTML_SUFFIXES = (".html", ".htm")
@@ -369,6 +370,31 @@ def create_app(
             comments.atomic_write(d.working_copy, transform.encode(html_text, enc))
             comments.atomic_write(d.sidecar, comments.dumps(sidecar))
             return {"version": d.version()}
+
+    @app.post("/api/status")
+    def api_status(doc: str):
+        """Cheap poll: has anything on disk changed since the page loaded?"""
+        d = _doc_or_404(doc)
+        with d.lock:
+            return {"version": d.version()}
+
+    @app.post("/api/agent-prompt")
+    def api_agent_prompt(doc: str):
+        d = _doc_or_404(doc)
+        with d.lock:
+            try:
+                sidecar = comments.load(d.sidecar)
+            except comments.CommentError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            if sidecar is None or not d.working_copy.is_file():
+                return JSONResponse(
+                    {"error": "Save first: the agent works from the saved files."}, status_code=409
+                )
+        open_count = sum(1 for c in sidecar["comments"] if c["status"] == "open")
+        return {
+            "open": open_count,
+            "prompt": agent_prompt(d.path, d.working_copy, d.sidecar, open_count),
+        }
 
     @app.post("/api/publish")
     def api_publish(doc: str, body: SaveRequest):

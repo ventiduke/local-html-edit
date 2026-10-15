@@ -333,3 +333,36 @@ def test_shutdown_calls_exit_hook(report):
     # Without the token, other sites can't shut it down.
     assert c.post("/api/shutdown", headers={"X-HR-Token": "no"}).status_code == 403
     assert called == [1]
+
+
+# -- agent prompt and change detection ----------------------------------------
+
+
+def test_status_reports_disk_changes(client, report):
+    cfg, _ = load_page(client, report)
+    status = lambda: client.post(f"/api/status?doc={cfg['doc']}").json()["version"]  # noqa: E731
+    assert status() == cfg["version"]
+    res = save(client, cfg, comments=[COMMENT])
+    assert status() == res.json()["version"]
+    report.with_name("report.edit.html").write_text("changed by an agent", encoding="utf-8")
+    assert status() != res.json()["version"]
+
+
+def test_agent_prompt_needs_saved_files(client, report):
+    cfg, _ = load_page(client, report)
+    res = client.post(f"/api/agent-prompt?doc={cfg['doc']}")
+    assert res.status_code == 409
+
+
+def test_agent_prompt_names_the_files(client, report):
+    cfg, _ = load_page(client, report)
+    resolved = dict(COMMENT, id="c2", status="resolved")
+    save(client, cfg, comments=[COMMENT, resolved])
+    res = client.post(f"/api/agent-prompt?doc={cfg['doc']}").json()
+    assert res["open"] == 1
+    prompt = res["prompt"]
+    assert "1 open review comment " in prompt
+    assert str(report.with_name("report.edit.html")) in prompt
+    assert str(report.with_name("report.comments.json")) in prompt
+    assert f"Do not modify the original: {report}" in prompt
+    assert "data-eid" in prompt and '"resolved"' in prompt

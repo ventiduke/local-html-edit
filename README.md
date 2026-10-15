@@ -50,6 +50,10 @@ uv run htmlreview --author "Alex"       # name recorded on comments (default: yo
 
 **Save.** Click **Save** or press Ctrl+S (Cmd+S). Edits go to `report.edit.html` and comments to `report.comments.json`; the original is never written to. Reopening the file later resumes from them. If either file was changed by something else since the page was loaded (an agent, another tab), the save is refused and you're offered a reload instead of overwriting.
 
+**Hand comments to an AI agent.** Click **Agent prompt**. It saves first if needed, then shows a prompt that names the working copy and comments file and tells the agent how to address each open comment and mark it resolved. Copy it into your agent (Claude Code, for example) and leave the review tab open.
+
+**Seeing the agent's changes.** The tab checks every couple of seconds whether the working copy or comments file changed on disk. Once the changes settle, it reloads by itself, keeping your scroll position and the comments panel, and says what changed (for example "2 comments resolved, 1 new reply"); resolved comments are shown so you can read the agent's notes. If you have unsaved changes or are in the middle of editing or writing a comment, it doesn't reload; a notice with a **Reload** button appears instead.
+
 **Publish.** Click **Publish**. After a confirmation that says how many comments will be deleted, it writes `report.published.html` next to the original with every edit applied and nothing from the editor left in it, then deletes the working copy and comments. You can then view the published file or open another one.
 
 ### Try it on the examples
