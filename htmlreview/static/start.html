@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTML Review</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6576;
+    --border: #d9dde5; --accent: #2457d6; --accent-text: #ffffff; --error: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171d; --card: #1d2129; --text: #e7e9ee; --muted: #9aa2b1;
+      --border: #333a47; --accent: #6b93ff; --accent-text: #0d1220; --error: #ff8a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px;
+  }
+  main {
+    width: 100%; max-width: 480px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; padding: 32px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p { margin: 0 0 24px; color: var(--muted); }
+  button, input { font: inherit; }
+  .primary {
+    width: 100%; padding: 12px 16px; border: 0; border-radius: 8px;
+    background: var(--accent); color: var(--accent-text); font-weight: 600; cursor: pointer;
+  }
+  .primary:disabled { opacity: .6; cursor: progress; }
+  .or { margin: 24px 0 8px; font-size: 14px; color: var(--muted); }
+  form { display: flex; gap: 8px; }
+  input {
+    flex: 1; min-width: 0; padding: 9px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent; color: var(--text);
+  }
+  .secondary {
+    padding: 9px 16px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); cursor: pointer;
+  }
+  #msg { min-height: 1.5em; margin: 16px 0 0; color: var(--error); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>HTML Review</h1>
+  <p>Edit text and leave comments on an HTML file, then publish a clean copy.</p>
+  <button class="primary" id="pick">Open HTML file…</button>
+  <div class="or">or paste the file's path</div>
+  <form id="open-form">
+    <input id="path" placeholder="C:\Reports\report.html" autocomplete="off" spellcheck="false" aria-label="File path">
+    <button class="secondary" type="submit">Open</button>
+  </form>
+  <div id="msg" role="status"></div>
+</main>
+<script>
+  const TOKEN = "{{API_TOKEN}}";
+  const msg = document.getElementById("msg");
+  const pickBtn = document.getElementById("pick");
+
+  async function call(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN },
+      body: JSON.stringify(body || {}),
+    });
+    return res.json();
+  }
+
+  function handle(result) {
+    if (result.url) { location.href = result.url; return; }
+    if (result.cancelled) { msg.textContent = ""; return; }
+    msg.textContent = result.error || "Something went wrong.";
+    if (result.noDialog) document.getElementById("path").focus();
+  }
+
+  pickBtn.addEventListener("click", async () => {
+    pickBtn.disabled = true;
+    msg.textContent = "";
+    try { handle(await call("/api/pick")); }
+    catch (e) { msg.textContent = "Can't reach the tool. Is it still running?"; }
+    finally { pickBtn.disabled = false; }
+  });
+
+  document.getElementById("open-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    msg.textContent = "";
+    try { handle(await call("/api/open", { path: document.getElementById("path").value })); }
+    catch (e) { msg.textContent = "Can't reach the tool. Is it still running?"; }
+  });
+</script>
+</body>
+</html>

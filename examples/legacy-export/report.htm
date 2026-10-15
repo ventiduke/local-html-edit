@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+<title>Café Expansion – Market Notes</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<h1>Café expansion: market notes</h1>
+<p>Exported from the legacy reporting tool. Some paragraphs below have no closing tags, the way older exporters write them.
+<p>Foot traffic near the three candidate sites was measured over six weeks.
+<p>The Rue Montmartre site had the highest weekday traffic and the best café density ratio.</p>
+<div id="traffic" style="width:100%;height:320px"></div>
+<p>Figure: average hourly foot traffic by site.</p>
+<h2>Shortlist</h2>
+<ul>
+<li>Rue Montmartre – preferred
+<li>Gare de l’Est – fallback
+<li>Bastille – rejected (rent)
+</ul>
+<table border=1 cellpadding=4>
+<tr><th>Site<th>Rent (€/m²)<th>Traffic
+<tr><td>Rue Montmartre<td>58<td>High
+<tr><td>Gare de l’Est<td>44<td>Medium
+</table>
+<p>Prepared for the expansion committee, résumé attached separately.</p>
+<script>
+  if (window.echarts) {
+    var chart = echarts.init(document.getElementById("traffic"));
+    chart.setOption({
+      tooltip: {}, legend: {},
+      xAxis: { type: "category", data: ["7h","9h","11h","13h","15h","17h","19h"] },
+      yAxis: { type: "value" },
+      series: [
+        { name: "Montmartre", type: "line", data: [120, 340, 280, 410, 300, 460, 380] },
+        { name: "Gare de l’Est", type: "line", data: [220, 390, 200, 260, 210, 420, 300] },
+        { name: "Bastille", type: "line", data: [90, 180, 220, 300, 260, 340, 410] }
+      ]
+    });
+  }
+</script>
