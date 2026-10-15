@@ -9,10 +9,10 @@ See [docs/PLAN.md](docs/PLAN.md) for the full design.
 | Milestone | State |
 | --- | --- |
 | 1. Serve and inject (open files, toolbar, editable-element detection) | Done |
-| 2. Edit and save | Not started |
-| 3. Comments | Not started |
-| 4. Publish | Not started |
-| 5. Hardening | Not started |
+| 2. Edit and save | Done |
+| 3. Comments | Done |
+| 4. Publish | Done |
+| 5. Hardening | Partly done (atomic writes, on-disk change detection, detached comments, original-changed warning) |
 
 ## Running it
 
@@ -38,6 +38,18 @@ uv run htmlreview --no-browser          # don't open a browser tab
 uv run htmlreview --author "Alex"       # name recorded on comments (default: your OS username)
 ```
 
+## Using it
+
+**Edit text.** Hover to see what's editable (blue dashed outline), then click and type. Press Enter or Esc, or click elsewhere, to finish. Edited elements get a blue bar on the left until saved. Pasting always pastes plain text. Inside editable text, a plain click edits; Ctrl+click (Cmd+click on a Mac) follows a link.
+
+**Script-filled text.** Text the page's own JavaScript fills in, like the KPI numbers in the sales example, is outlined in orange. You can comment on it but not edit it, so a script-generated value is never saved into the file.
+
+**Comment.** Select some text and click the **Comment** bubble that appears, or click a paragraph and use **Add comment** in the Comments panel (Ctrl+Alt+M does the same). Charts can't be commented on directly; comment on their title or caption. In the panel you can reply, resolve, reopen and delete. Clicking a comment scrolls to its text. If the text a comment was on has been rewritten so it can't be found, the comment is marked **detached** rather than lost.
+
+**Save.** Click **Save** or press Ctrl+S (Cmd+S). Edits go to `report.edit.html` and comments to `report.comments.json`; the original is never written to. Reopening the file later resumes from them. If either file was changed by something else since the page was loaded (an agent, another tab), the save is refused and you're offered a reload instead of overwriting.
+
+**Publish.** Click **Publish**. After a confirmation that says how many comments will be deleted, it writes `report.published.html` next to the original with every edit applied and nothing from the editor left in it, then deletes the working copy and comments. You can then view the published file or open another one.
+
 ### Try it on the examples
 
 `examples/` has three fake reports:
@@ -46,21 +58,61 @@ uv run htmlreview --author "Alex"       # name recorded on comments (default: yo
 - `ops-review/report.html`: Plotly from a CDN, a hand-drawn inline SVG chart, nested lists, a blockquote, Windows line endings
 - `legacy-export/report.htm`: ECharts from a CDN, windows-1252 encoding, no `<head>`/`<body>`, paragraphs without closing tags
 
-Hover over text to see what's editable (blue dashed outline). Text that the page's own JavaScript fills in, like the KPI numbers in the sales report, is outlined in orange: it can be commented on but not edited, so a script-generated value is never saved into the file.
+The tool writes its files next to the examples; they're ignored by git.
 
 ## What can be edited
 
 Paragraphs, headings, list items, table cells, captions and standalone `<span>`s whose content is plain text with inline formatting (bold, links and so on). Charts, SVG, and anything inside `<head>`, `<script>` or `<style>` are never touched. Elements that rely on implicit closing tags (common in old exporters) are not editable yet.
 
+Saving never serializes the browser's live page. Only the edited elements' contents are sent, and the server splices them into the source file by position, so everything else (scripts, embedded data, formatting, line endings, encoding) stays byte-identical.
+
 ## Files the tool writes
 
 Next to `report.html`:
 
-| File | When |
-| --- | --- |
-| `report.edit.html` | Working copy, written on save (milestone 2) |
-| `report.comments.json` | Comments, written on save (milestone 3) |
-| `report.published.html` | Clean output, written on publish (milestone 4); the two files above are then deleted |
+| File | Purpose | Lifetime |
+| --- | --- | --- |
+| `report.edit.html` | Working copy: the original plus `data-eid` attributes and your edits | Written on every save, deleted on publish |
+| `report.comments.json` | Comments | Written on every save, deleted on publish |
+| `report.published.html` | Clean output | Written on publish |
+
+## For agents: the comments file
+
+`report.comments.json` is the interface between a human reviewer and an agent that applies the feedback. An agent needs only the two files, not the tool.
+
+```json
+{
+  "version": 1,
+  "source": "report.html",
+  "source_sha256": "9f2c…",
+  "comments": [
+    {
+      "id": "c7",
+      "anchor": {
+        "eid": "e42",
+        "quote": "win rate rose 4%",
+        "prefix": "In EMEA, ",
+        "suffix": " week over week"
+      },
+      "body": "Is this significant? Add a CI.",
+      "status": "open",
+      "author": "alex",
+      "created": "2026-10-15T10:10:00-07:00",
+      "replies": [
+        { "author": "sam", "body": "Yes, p < 0.05.", "created": "2026-10-15T11:02:00-07:00" }
+      ],
+      "resolution": null
+    }
+  ]
+}
+```
+
+- `anchor.eid` matches a `data-eid="…"` attribute in `report.edit.html`. `quote` is the exact text the comment is about, with up to 32 characters of `prefix`/`suffix` around it to tell repeated phrases apart. A comment on a whole element has no `quote`, `prefix` or `suffix`.
+- To act on comments: edit `report.edit.html` (not the original), keep existing `data-eid` attributes in place, then set the comment's `status` to `"resolved"` and `resolution` to a one-line note of what changed. Leave comments you didn't act on `"open"`.
+- New elements an agent adds don't need a `data-eid`; the tool numbers them when the file is next opened.
+- Every save writes both files, so whenever `report.comments.json` exists, `report.edit.html` exists too and its `data-eid`s match the comments.
+- Keep the JSON valid and comment `id`s unique. The full JSON Schema is in [schema/comments.schema.json](schema/comments.schema.json).
+- If the tool has the file open while an agent edits it, the next save in the browser is refused with a "changed on disk" prompt, so the agent's changes aren't overwritten.
 
 ## Development
 

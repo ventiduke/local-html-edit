@@ -2,6 +2,8 @@
 
 Oct 15, 2026 (revised the same day after review; see "Decisions" at the end)
 
+**Progress:** milestones 1–4 are built. From milestone 5, atomic writes, the on-disk change check, detached comments and the original-changed warning are done; editing elements with implicit end tags is still open.
+
 ## Goal and scope
 
 Build a local tool that opens an existing HTML file in the browser, lets a person edit text in place and leave comments, then publishes a clean HTML file with every editing artifact removed.

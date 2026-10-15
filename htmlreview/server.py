@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import mimetypes
 import secrets
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
@@ -13,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
-from . import picker, transform
+from . import comments, picker, transform
 
 STATIC_DIR = Path(__file__).parent / "static"
 HTML_SUFFIXES = (".html", ".htm")
@@ -37,6 +38,7 @@ for _type, _ext in [
 class Doc:
     token: str
     path: Path  # the original file
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def folder(self) -> Path:
@@ -50,6 +52,27 @@ class Doc:
     def working_copy(self) -> Path:
         return derived_path(self.path, "edit")
 
+    @property
+    def published(self) -> Path:
+        return derived_path(self.path, "published")
+
+    @property
+    def sidecar(self) -> Path:
+        return self.path.with_name(f"{self.path.stem}.comments.json")
+
+    def source(self) -> Path:
+        """Where editing resumes from: the working copy if there is one."""
+        return self.working_copy if self.working_copy.is_file() else self.path
+
+    def version(self) -> str:
+        """Fingerprint of the files a save would overwrite.
+
+        If it changes between loading the page and saving (an agent edited
+        the working copy or resolved comments), the save is refused.
+        """
+        sidecar = self.sidecar.read_bytes() if self.sidecar.is_file() else b""
+        return comments.sha256(self.source().read_bytes() + b"\0" + sidecar)
+
 
 def derived_path(original: Path, kind: str) -> Path:
     """report.html -> report.<kind>.html"""
@@ -58,6 +81,12 @@ def derived_path(original: Path, kind: str) -> Path:
 
 class OpenRequest(BaseModel):
     path: str
+
+
+class SaveRequest(BaseModel):
+    version: str
+    edits: dict[str, str] = {}
+    comments: list = []
 
 
 class Session:
@@ -144,6 +173,10 @@ def create_app(
         page = (STATIC_DIR / "start.html").read_text(encoding="utf-8")
         return HTMLResponse(page.replace("{{API_TOKEN}}", api_token), headers=_no_store)
 
+    @app.get("/favicon.ico")
+    def favicon():
+        return Response(status_code=204)
+
     @app.get("/__hr/{name}")
     def editor_asset(name: str):
         path = STATIC_DIR / name
@@ -161,17 +194,34 @@ def create_app(
         return _static_file(doc.folder, rest)
 
     def _edit_page(doc: Doc) -> HTMLResponse:
-        source = doc.working_copy if doc.working_copy.is_file() else doc.path
-        text, _ = transform.decode(source.read_bytes())
+        with doc.lock:
+            source = doc.source()
+            version = doc.version()
+            text, _ = transform.decode(source.read_bytes())
+            comments_error = None
+            try:
+                sidecar = comments.load(doc.sidecar)
+            except comments.CommentError as exc:
+                sidecar, comments_error = None, str(exc)
+            original_changed = bool(
+                sidecar
+                and sidecar.get("source_sha256")
+                and sidecar["source_sha256"] != comments.sha256(doc.path.read_bytes())
+            )
         tagged = transform.tag(text)
         config = {
             "apiToken": api_token,
             "doc": doc.token,
             "name": doc.path.name,
             "path": str(doc.path),
+            "publishedName": doc.published.name,
             "author": author,
             "resumed": source != doc.path,
+            "version": version,
             "editable": tagged.editable,
+            "comments": sidecar["comments"] if sidecar else [],
+            "commentsError": comments_error,
+            "originalChanged": original_changed,
         }
         page = transform.inject(tagged.html, config, "/__hr/editor.js")
         # Sent as UTF-8; the HTTP header overrides any <meta charset>.
@@ -207,6 +257,61 @@ def create_app(
         except OpenError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"url": doc.url, "name": doc.path.name}
+
+    def _doc_or_404(token: str) -> Doc:
+        doc = session.docs.get(token)
+        if doc is None:
+            raise HTTPException(404, "This file isn't open. Reopen it from the start page.")
+        return doc
+
+    def _render(doc: Doc, body: SaveRequest) -> tuple[str, str]:
+        """Current source with eids and the requested edits applied."""
+        text, enc = transform.decode(doc.source().read_bytes())
+        return transform.apply_edits(transform.tag(text).html, body.edits), enc
+
+    def _conflict() -> JSONResponse:
+        return JSONResponse(
+            {"error": "The working copy or comments changed on disk since this page was loaded.",
+             "conflict": True},
+            status_code=409,
+        )
+
+    @app.post("/api/save")
+    def api_save(doc: str, body: SaveRequest):
+        d = _doc_or_404(doc)
+        with d.lock:
+            if body.version != d.version():
+                return _conflict()
+            try:
+                comments.load(d.sidecar)  # refuse to overwrite a sidecar we can't read
+                html_text, enc = _render(d, body)
+                sidecar = comments.build(
+                    d.path.name, comments.sha256(d.path.read_bytes()), body.comments
+                )
+            except (transform.EditError, comments.CommentError) as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            comments.atomic_write(d.working_copy, transform.encode(html_text, enc))
+            comments.atomic_write(d.sidecar, comments.dumps(sidecar))
+            return {"version": d.version()}
+
+    @app.post("/api/publish")
+    def api_publish(doc: str, body: SaveRequest):
+        d = _doc_or_404(doc)
+        with d.lock:
+            if body.version != d.version():
+                return _conflict()
+            try:
+                html_text, enc = _render(d, body)
+            except transform.EditError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            clean = transform.strip_eids(html_text)
+            comments.atomic_write(d.published, transform.encode(clean, enc))
+            for leftover in (d.working_copy, d.sidecar):
+                leftover.unlink(missing_ok=True)
+        return {
+            "published": d.published.name,
+            "url": f"/doc/{d.token}/{quote(d.published.name)}",
+        }
 
     return app
 
