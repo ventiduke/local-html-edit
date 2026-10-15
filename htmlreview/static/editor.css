@@ -45,6 +45,7 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
 button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+button.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.1); }
 button.danger-text { color: var(--danger); }
 button.icon { border: 0; padding: 4px 6px; font-size: 14px; line-height: 1; color: var(--muted); }
 button.on { background: var(--hover); }
@@ -126,6 +127,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   background: var(--accent); color: var(--accent-text); border: 0;
   box-shadow: 0 3px 12px rgba(0, 0, 0, .2); font-weight: 600;
 }
+.bubble:hover:not(:disabled) { background: var(--accent); filter: brightness(1.12); }
 .bubble[hidden] { display: none; }
 
 /* -------------------------------------------------------------- modal */

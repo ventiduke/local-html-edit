@@ -27,7 +27,9 @@ Then, from this folder:
 uv run htmlreview
 ```
 
-A browser tab opens on the start page. Click **Open HTML file…** (or paste a path) to open a report. Use the toolbar's **Open…** button to switch to another file at any time. Keep the terminal window open while you work; press Ctrl+C there to quit.
+A browser tab opens on the start page. Click **Open HTML file…** (or paste a path) to open a report. Use the toolbar's **Open…** button to switch to another file at any time.
+
+**Stopping it.** Click **Exit** in the toolbar (or on the start page), or just close the browser tab: the tool notices when none of its tabs are open any more and stops by itself about 15 seconds later, so it never lingers in the background. Reloading or switching files doesn't count as closing. Ctrl+C in the terminal also works. If you have unsaved changes, Exit asks first.
 
 Options:
 

@@ -237,9 +237,11 @@ def test_publish_writes_clean_file_and_cleans_up(client, report):
     assert report.read_bytes() == original
     assert not report.with_name("report.edit.html").exists()
     assert not report.with_name("report.comments.json").exists()
-    # The published file is viewable as a plain file.
+    # The published file is viewable without the editor (only the keepalive).
     view = client.get(res.json()["url"])
-    assert view.status_code == 200 and "__hr" not in view.text
+    assert view.status_code == 200
+    assert "/__hr/editor.js" not in view.text and "data-eid" not in view.text
+    assert "/__hr/keepalive.js" in view.text
 
 
 def test_publish_without_edits_is_byte_identical(client, tmp_path):
@@ -263,3 +265,71 @@ def test_broken_sidecar_blocks_save(client, report):
     cfg, _ = load_page(client, report)
     assert "not valid JSON" in cfg["commentsError"]
     assert save(client, cfg, {"e6": "x"}).status_code == 400
+
+
+# -- staying alive and exiting ------------------------------------------------
+
+from htmlreview.server import Presence  # noqa: E402
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_presence_exits_only_after_last_tab_closes_and_grace_passes():
+    clock = FakeClock()
+    p = Presence(grace=15, stale=180, clock=clock)
+    clock.t += 600
+    assert not p.idle()  # never exits before any tab has connected
+    p.update("a", "hello")
+    p.update("b", "hello")
+    p.update("a", "bye")
+    clock.t += 60
+    assert not p.idle()  # b still open
+    p.update("b", "bye")
+    p.request()
+    clock.t += 10
+    assert not p.idle()  # within grace: maybe a reload or opening another file
+    p.update("c", "hello")
+    p.update("c", "bye")
+    p.request()
+    clock.t += 16
+    assert p.idle()
+
+
+def test_presence_forgets_tabs_that_vanish_and_survives_sleep():
+    clock = FakeClock()
+    p = Presence(grace=15, stale=180, clock=clock)
+    p.update("a", "hello")
+    clock.t += 100
+    p.update("a", "beat")
+    clock.t += 179
+    assert not p.idle()
+    clock.t += 3600  # computer slept
+    p.resume()
+    assert not p.idle()
+    clock.t += 181  # no heartbeat after waking: the tab is gone (browser crashed)
+    assert p.idle()
+
+
+def test_pages_carry_keepalive_and_presence_endpoint(client, report):
+    assert "/__hr/keepalive.js" in client.get("/").text
+    assert "/__hr/keepalive.js" in client.get(open_doc(client, report)).text
+    assert client.get("/__hr/keepalive.js").status_code == 200
+    assert client.post("/api/presence", json={"id": "x", "state": "hello"}).status_code == 200
+    assert client.app.state.presence.clients.keys() == {"x"}
+
+
+def test_shutdown_calls_exit_hook(report):
+    called = []
+    app = create_app(allowed_hosts={HOST}, api_token=TOKEN, on_exit=lambda: called.append(1))
+    c = TestClient(app, headers={"X-HR-Token": TOKEN})
+    assert c.post("/api/shutdown").status_code == 200
+    assert called == [1]
+    # Without the token, other sites can't shut it down.
+    assert c.post("/api/shutdown", headers={"X-HR-Token": "no"}).status_code == 403
+    assert called == [1]

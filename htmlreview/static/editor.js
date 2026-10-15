@@ -117,6 +117,7 @@
         <button class="comments-btn" title="Show comments (Ctrl+Alt+M adds one)">Comments <span class="count"></span></button>
         <button class="save primary" title="Save (Ctrl+S)">Save</button>
         <button class="publish" title="Write a clean copy and finish this review">Publish</button>
+        <button class="exit" title="Stop HTML Review (it also stops by itself shortly after you close every tab)">Exit</button>
       </div>
     </div>
     <div class="toasts"></div>
@@ -163,9 +164,11 @@
           buttons.map((b) => h("button", { class: b.kind || "", text: b.label, onclick: () => close(b.value) }))));
       wrap.replaceChildren(box);
       wrap.hidden = false;
-      wrap.onclick = (e) => { if (e.target === wrap) close(null); };
-      wrap.onkeydown = (e) => { if (e.key === "Escape") close(null); };
-      (box.querySelector("button.primary, button.danger") || box.querySelector("button")).focus();
+      // A modal without buttons (the "stopped" notice) can't be dismissed.
+      wrap.onclick = buttons.length ? (e) => { if (e.target === wrap) close(null); } : null;
+      wrap.onkeydown = buttons.length ? (e) => { if (e.key === "Escape") close(null); } : null;
+      const focus = box.querySelector("button.primary, button.danger") || box.querySelector("button");
+      if (focus) focus.focus();
     });
   }
 
@@ -453,6 +456,24 @@
     }
   }
   $(".open").addEventListener("click", openAnother);
+
+  // --------------------------------------------------------------- exit
+
+  async function exitTool() {
+    if (!(await confirmDiscard("exit"))) return;
+    await api("/api/shutdown");
+    state.leaving = true;
+    if (window.__hrKeepalive) window.__hrKeepalive.stop();
+    bar.querySelector(".actions").replaceChildren();
+    $(".status").textContent = "Stopped";
+    openSidebar(false);
+    modal({
+      title: "HTML Review has stopped",
+      body: ["You can close this tab. Run uv run htmlreview to start it again."],
+      buttons: [],
+    });
+  }
+  $(".exit").addEventListener("click", exitTool);
 
   // ------------------------------------------------------------ publish
 

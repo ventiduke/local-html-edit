@@ -5,6 +5,7 @@ from __future__ import annotations
 import mimetypes
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -83,6 +84,11 @@ class OpenRequest(BaseModel):
     path: str
 
 
+class PresenceRequest(BaseModel):
+    id: str
+    state: str  # hello | beat | bye
+
+
 class SaveRequest(BaseModel):
     version: str
     edits: dict[str, str] = {}
@@ -111,6 +117,53 @@ class Session:
 
 class OpenError(ValueError):
     pass
+
+
+class Presence:
+    """Tracks open browser tabs so the server can exit when the last one closes.
+
+    Every page the tool serves says hello when it loads, sends a heartbeat
+    while open, and says goodbye when it unloads. A goodbye is usually
+    followed within a second by the next page's hello (reload, opening
+    another file), so the server only exits after ``grace`` seconds with no
+    tabs and no requests. Tabs that vanish without a goodbye (browser crash)
+    are forgotten after ``stale`` seconds; background tabs only get timers
+    about once a minute, so this must be well above that.
+    """
+
+    def __init__(self, grace: float = 15.0, stale: float = 180.0, clock=time.monotonic):
+        self.grace = grace
+        self.stale = stale
+        self.clock = clock
+        self.clients: dict[str, float] = {}
+        self.last_request = clock()
+        self.ever_seen = False
+        self._lock = threading.Lock()
+
+    def request(self) -> None:
+        self.last_request = self.clock()
+
+    def update(self, client: str, state: str) -> None:
+        with self._lock:
+            if state == "bye":
+                self.clients.pop(client, None)
+            else:
+                self.clients[client] = self.clock()
+                self.ever_seen = True
+
+    def resume(self) -> None:
+        """After the computer slept, give open tabs time to check in again."""
+        with self._lock:
+            now = self.clock()
+            self.last_request = now
+            self.clients = dict.fromkeys(self.clients, now)
+
+    def idle(self) -> bool:
+        """True once every tab has been closed for a while."""
+        with self._lock:
+            now = self.clock()
+            self.clients = {c: t for c, t in self.clients.items() if now - t < self.stale}
+            return self.ever_seen and not self.clients and now - self.last_request > self.grace
 
 
 def resolve_user_path(raw: str) -> Path:
@@ -145,18 +198,24 @@ def create_app(
     api_token: str | None = None,
     author: str = "",
     pick: Callable[[str | None], str | None] = picker.pick_file,
+    on_exit: Callable[[], None] = lambda: None,
+    presence: Presence | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     session = Session()
     api_token = api_token or secrets.token_urlsafe(24)
+    presence = presence or Presence()
     app.state.session = session
     app.state.api_token = api_token
+    app.state.presence = presence
+    keepalive = f'<script src="/__hr/keepalive.js" data-hr data-hr-token="{api_token}"></script>'
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
         # Only our own origin: blocks DNS-rebinding attacks from other sites.
         if request.headers.get("host", "").lower() not in allowed_hosts:
             return Response("Bad host", status_code=403)
+        presence.request()
         if request.url.path.startswith("/api/"):
             # Other sites can't read our pages to learn the token, and can't
             # send a custom header cross-origin without a CORS preflight.
@@ -171,7 +230,8 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def start_page():
         page = (STATIC_DIR / "start.html").read_text(encoding="utf-8")
-        return HTMLResponse(page.replace("{{API_TOKEN}}", api_token), headers=_no_store)
+        page = page.replace("{{API_TOKEN}}", api_token).replace("{{KEEPALIVE}}", keepalive)
+        return HTMLResponse(page, headers=_no_store)
 
     @app.get("/favicon.ico")
     def favicon():
@@ -180,7 +240,7 @@ def create_app(
     @app.get("/__hr/{name}")
     def editor_asset(name: str):
         path = STATIC_DIR / name
-        if name not in ("editor.js", "editor.css") or not path.is_file():
+        if name not in ("editor.js", "editor.css", "keepalive.js") or not path.is_file():
             raise HTTPException(404)
         return FileResponse(path, headers=_no_store)
 
@@ -191,7 +251,13 @@ def create_app(
             return _not_open_page()
         if rest == doc.path.name:
             return _edit_page(doc)
-        return _static_file(doc.folder, rest)
+        target = _static_target(doc.folder, rest)
+        if target.suffix.lower() in HTML_SUFFIXES:
+            # Other pages in the report's folder (the published file, linked
+            # pages) get only the keepalive, so the tool stays running.
+            text, _ = transform.decode(target.read_bytes())
+            return HTMLResponse(transform.inject_snippet(text, keepalive), headers=_no_store)
+        return FileResponse(target, headers=_no_store)
 
     def _edit_page(doc: Doc) -> HTMLResponse:
         with doc.lock:
@@ -223,7 +289,7 @@ def create_app(
             "commentsError": comments_error,
             "originalChanged": original_changed,
         }
-        page = transform.inject(tagged.html, config, "/__hr/editor.js")
+        page = transform.inject(tagged.html, config, "/__hr/editor.js", extra=keepalive)
         # Sent as UTF-8; the HTTP header overrides any <meta charset>.
         return HTMLResponse(page, headers=_no_store)
 
@@ -236,6 +302,16 @@ def create_app(
         except OpenError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"url": doc.url, "name": doc.path.name}
+
+    @app.post("/api/presence")
+    def api_presence(body: PresenceRequest):
+        presence.update(body.id, body.state)
+        return {"ok": True}
+
+    @app.post("/api/shutdown")
+    def api_shutdown():
+        on_exit()
+        return {"ok": True}
 
     @app.post("/api/pick")
     def api_pick():
@@ -319,7 +395,8 @@ def create_app(
 _no_store = {"Cache-Control": "no-store"}
 
 
-def _static_file(folder: Path, rest: str) -> Response:
+def _static_target(folder: Path, rest: str) -> Path:
+    """A file under ``folder``; 404 for anything missing or outside it."""
     root = folder.resolve()
     try:
         target = (root / rest).resolve(strict=True)
@@ -327,7 +404,7 @@ def _static_file(folder: Path, rest: str) -> Response:
         raise HTTPException(404) from None
     if not target.is_relative_to(root) or not target.is_file():
         raise HTTPException(404)
-    return FileResponse(target, headers=_no_store)
+    return target
 
 
 def _not_open_page() -> HTMLResponse:

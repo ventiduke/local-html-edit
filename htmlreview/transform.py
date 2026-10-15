@@ -394,13 +394,18 @@ def sanitize_fragment(fragment: str) -> str:
 # Injecting the editor
 
 
-def inject(text: str, config: dict, script_url: str) -> str:
+def inject(text: str, config: dict, script_url: str, extra: str = "") -> str:
     """Insert the editor config and script; never written to disk."""
     payload = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
     snippet = (
         f'<script type="application/json" id="__hr-config">{payload}</script>'
-        f'<script src="{script_url}" defer data-hr></script>'
+        f'<script src="{script_url}" defer data-hr></script>{extra}'
     )
+    return inject_snippet(text, snippet)
+
+
+def inject_snippet(text: str, snippet: str) -> str:
+    """Insert markup at the end of <head> (or as early as possible)."""
     elements = scan(text)
     pos = _injection_point(elements)
     if pos is None:
