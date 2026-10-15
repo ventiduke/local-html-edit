@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+# Files the tool writes next to reports while you test with the examples
+*.edit.html
+*.comments.json
+*.published.html
