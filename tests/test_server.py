@@ -280,40 +280,78 @@ class FakeClock:
         return self.t
 
 
-def test_presence_exits_only_after_last_tab_closes_and_grace_passes():
+def test_presence_exits_only_after_every_tab_says_goodbye_and_grace_passes():
     clock = FakeClock()
-    p = Presence(grace=15, stale=180, clock=clock)
+    p = Presence(grace=60, orphan=12 * 3600, clock=clock)
     clock.t += 600
-    assert not p.idle()  # never exits before any tab has connected
+    assert p.idle() is None  # never exits before any tab has connected
     p.update("a", "hello")
     p.update("b", "hello")
     p.update("a", "bye")
-    clock.t += 60
-    assert not p.idle()  # b still open
+    clock.t += 120
+    assert p.idle() is None  # b still open
     p.update("b", "bye")
     p.request()
-    clock.t += 10
-    assert not p.idle()  # within grace: maybe a reload or opening another file
-    p.update("c", "hello")
+    clock.t += 50
+    assert p.idle() is None  # within grace: maybe a reload or opening another file
+    p.update("c", "hello")  # ...and the next page arrives
     p.update("c", "bye")
     p.request()
-    clock.t += 16
-    assert p.idle()
+    clock.t += 61
+    assert p.idle() == "All HTML Review tabs were closed, so it stopped."
 
 
-def test_presence_forgets_tabs_that_vanish_and_survives_sleep():
+def test_quiet_tabs_are_not_treated_as_closed():
+    """A background tab whose timers are paused (macOS App Nap, Chrome
+    Memory Saver, Edge sleeping tabs) stays registered for hours."""
     clock = FakeClock()
-    p = Presence(grace=15, stale=180, clock=clock)
+    p = Presence(grace=60, orphan=12 * 3600, clock=clock)
     p.update("a", "hello")
-    clock.t += 100
-    p.update("a", "beat")
-    clock.t += 179
-    assert not p.idle()
+    clock.t += 6 * 3600
+    assert p.idle() is None
+    p.update("a", "hello")  # woke up: visibilitychange / focus / resume
+    clock.t += 11 * 3600
+    assert p.idle() is None
+
+
+def test_orphaned_tabs_are_given_up_after_the_orphan_timeout():
+    clock = FakeClock()
+    p = Presence(grace=60, orphan=12 * 3600, clock=clock)
+    p.update("a", "hello")
+    clock.t += 12 * 3600 + 1
+    assert p.idle() == "No HTML Review tab had checked in for 12 hours, so it stopped."
+
+
+def test_late_check_in_after_goodbye_does_not_revive_a_closed_tab():
+    clock = FakeClock()
+    p = Presence(grace=60, clock=clock)
+    p.update("a", "hello")
+    p.update("a", "bye")
+    p.update("a", "beat")  # was already in flight when the tab closed
+    clock.t += 61
+    assert p.idle() is not None
+    # ...but a page restored from the back/forward cache says hello again.
+    p.update("a", "hello")
+    assert p.idle() is None
+
+
+def test_sleep_resets_the_clock():
+    clock = FakeClock()
+    p = Presence(grace=60, orphan=100, clock=clock)
+    p.update("a", "hello")
     clock.t += 3600  # computer slept
     p.resume()
-    assert not p.idle()
-    clock.t += 181  # no heartbeat after waking: the tab is gone (browser crashed)
-    assert p.idle()
+    assert p.idle() is None
+
+
+def test_api_calls_from_a_tab_count_as_check_ins(client, report):
+    presence = client.app.state.presence
+    cfg, _ = load_page(client, report)
+    client.post(f"/api/status?doc={cfg['doc']}", headers={"X-HR-Client": "tab-1"})
+    assert "tab-1" in presence.clients
+    client.post("/api/presence", json={"id": "tab-1", "state": "bye"})
+    client.post(f"/api/status?doc={cfg['doc']}", headers={"X-HR-Client": "tab-1"})
+    assert "tab-1" not in presence.clients
 
 
 def test_pages_carry_keepalive_and_presence_endpoint(client, report):

@@ -29,7 +29,7 @@ uv run htmlreview
 
 A browser tab opens on the start page. Click **Open HTML file…** (or paste a path) to open a report. Use the toolbar's **Open…** button to switch to another file at any time.
 
-**Stopping it.** Click **Exit** in the toolbar (or on the start page), or just close the browser tab: the tool notices when none of its tabs are open any more and stops by itself about 15 seconds later, so it never lingers in the background. Reloading or switching files doesn't count as closing. Ctrl+C in the terminal also works. If you have unsaved changes, Exit asks first.
+**Stopping it.** Click **Exit** in the toolbar (or on the start page), or just close the browser tab: once every one of its tabs has been closed, the tool stops by itself about a minute later. Reloading or switching files doesn't count as closing, and neither does a tab sitting in the background for a long time (browsers pause background tabs, especially on macOS). If a browser crashes without its tabs saying goodbye, the tool stops after 12 hours. Ctrl+C in the terminal also works. If you have unsaved changes, Exit asks first.
 
 Options:
 

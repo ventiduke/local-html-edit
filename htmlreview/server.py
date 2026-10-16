@@ -123,20 +123,23 @@ class OpenError(ValueError):
 class Presence:
     """Tracks open browser tabs so the server can exit when the last one closes.
 
-    Every page the tool serves says hello when it loads, sends a heartbeat
-    while open, and says goodbye when it unloads. A goodbye is usually
-    followed within a second by the next page's hello (reload, opening
-    another file), so the server only exits after ``grace`` seconds with no
-    tabs and no requests. Tabs that vanish without a goodbye (browser crash)
-    are forgotten after ``stale`` seconds; background tabs only get timers
-    about once a minute, so this must be well above that.
+    Every page the tool serves says hello when it loads, checks in while open,
+    and says goodbye when it unloads. Only a goodbye counts as closing a tab:
+    browsers pause or freeze background tabs (macOS App Nap, Chrome Memory
+    Saver, Edge sleeping tabs), so a tab that has gone quiet is usually still
+    open. A goodbye is often followed by the next page's hello (reload,
+    opening another file, VS Code rebuilding its browser view), so the server
+    waits ``grace`` seconds with no tabs and no requests before exiting.
+    Tabs that never say goodbye (a crashed browser) are given up on after
+    ``orphan`` seconds.
     """
 
-    def __init__(self, grace: float = 15.0, stale: float = 180.0, clock=time.monotonic):
+    def __init__(self, grace: float = 60.0, orphan: float = 12 * 3600.0, clock=time.monotonic):
         self.grace = grace
-        self.stale = stale
+        self.orphan = orphan
         self.clock = clock
         self.clients: dict[str, float] = {}
+        self.gone: set[str] = set()  # tabs that said goodbye
         self.last_request = clock()
         self.ever_seen = False
         self._lock = threading.Lock()
@@ -148,9 +151,13 @@ class Presence:
         with self._lock:
             if state == "bye":
                 self.clients.pop(client, None)
-            else:
-                self.clients[client] = self.clock()
-                self.ever_seen = True
+                self.gone.add(client)
+                return
+            if state != "hello" and client in self.gone:
+                return  # a check-in that was already on its way when the tab closed
+            self.gone.discard(client)
+            self.clients[client] = self.clock()
+            self.ever_seen = True
 
     def resume(self) -> None:
         """After the computer slept, give open tabs time to check in again."""
@@ -159,12 +166,19 @@ class Presence:
             self.last_request = now
             self.clients = dict.fromkeys(self.clients, now)
 
-    def idle(self) -> bool:
-        """True once every tab has been closed for a while."""
+    def idle(self) -> str | None:
+        """Why the server should stop now, or None to keep running."""
         with self._lock:
             now = self.clock()
-            self.clients = {c: t for c, t in self.clients.items() if now - t < self.stale}
-            return self.ever_seen and not self.clients and now - self.last_request > self.grace
+            orphaned = [c for c, t in self.clients.items() if now - t >= self.orphan]
+            for c in orphaned:
+                del self.clients[c]
+            if not self.ever_seen or self.clients or now - self.last_request <= self.grace:
+                return None
+            if orphaned:
+                hours = round(self.orphan / 3600)
+                return f"No HTML Review tab had checked in for {hours} hours, so it stopped."
+            return "All HTML Review tabs were closed, so it stopped."
 
 
 def resolve_user_path(raw: str) -> Path:
@@ -227,6 +241,10 @@ def create_app(
             # send a custom header cross-origin without a CORS preflight.
             if not secrets.compare_digest(request.headers.get("x-hr-token", ""), api_token):
                 return JSONResponse({"error": "Missing or wrong API token."}, status_code=403)
+            # Any call from a tab (saves, the change check) also says it's open.
+            client = request.headers.get("x-hr-client")
+            if client and request.url.path != "/api/presence":
+                presence.update(client, "beat")
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
         return response

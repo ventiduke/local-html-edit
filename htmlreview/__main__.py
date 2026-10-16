@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
                 return
             time.sleep(0.05)
         print(f"HTML Review is running at {start_url}")
-        print("It stops by itself shortly after you close its browser tabs,")
+        print("It stops by itself about a minute after you close its browser tabs,")
         print("or use the Exit button, or press Ctrl+C here.")
         if not args.no_browser:
             webbrowser.open(start_url)
@@ -110,8 +110,9 @@ def main(argv: list[str] | None = None) -> None:
                 # The computer was asleep; tabs haven't had a chance to check in.
                 presence.resume()
             last_tick = now
-            if presence.idle():
-                request_exit("All HTML Review tabs were closed, so it stopped.")
+            reason = presence.idle()
+            if reason:
+                request_exit(reason)
 
     threading.Thread(target=announce, daemon=True).start()
     threading.Thread(target=watchdog, daemon=True).start()
