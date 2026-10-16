@@ -39,7 +39,12 @@
     try {
       res = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-HR-Token": cfg.apiToken },
+        headers: {
+          "Content-Type": "application/json",
+          "X-HR-Token": cfg.apiToken,
+          // Lets every call (including the change check) count as "this tab is open".
+          ...(window.__hrKeepalive ? { "X-HR-Client": window.__hrKeepalive.id } : {}),
+        },
         body: JSON.stringify(body || {}),
       });
     } catch {
